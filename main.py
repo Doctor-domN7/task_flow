@@ -1,7 +1,13 @@
 import uvicorn
 
+from database import SessionLocal
+from db_models import TaskDB
+
 from fastapi import FastAPI, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from database import get_db
 
 from pydantic import BaseModel
 from uuid import uuid4
@@ -48,9 +54,16 @@ async def get_tasks() -> list[Task]:
     return tasks
 
 @app.post("/tasks", status_code=status.HTTP_201_CREATED)
-async def create_task(payload: TaskCreate) -> Task:
-    task = Task(id=str(uuid4()), title=payload.title, completed=False)
-    tasks.append(task)  
+async def create_task(payload: TaskCreate, db: Session=Depends(get_db)) -> Task:
+    task = TaskDB(
+        id=str(uuid4()),
+        title=payload.title,
+        completed=False,
+    )
+
+    db.add(task)
+    db.commit()
+
     return task
 
 @app.patch("/tasks/{task_id}", status_code=status.HTTP_200_OK)
