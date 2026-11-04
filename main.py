@@ -1,7 +1,7 @@
+from sqlalchemy import select
 import uvicorn
 
-from database import SessionLocal
-from db_models import TaskDB
+from db_models import CategoryDB, TaskDB
 
 from fastapi import FastAPI, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +9,7 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 from database import get_db
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from uuid import uuid4
 
 class TaskCreate(BaseModel):
@@ -19,6 +19,7 @@ class Task(BaseModel):
     id: str
     title: str 
     completed: bool = False 
+    model_config = ConfigDict(from_attributes=True)
 
 class TaskUpdate(BaseModel):
     title: str | None = None
@@ -31,6 +32,7 @@ class CategoryCreate(BaseModel):
 class Category(BaseModel):
     id: str 
     name: str
+    model_config = ConfigDict(from_attributes=True)
 
 class CategoryUpdate(BaseModel):
     name: str | None = None
@@ -46,15 +48,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-tasks = []
-categories = []
-
 @app.get("/tasks",status_code=status.HTTP_200_OK) 
-async def get_tasks() -> list[Task]:
+def get_tasks(db: Session=Depends(get_db)) -> list[Task]:
+    tasks = db.scalars(select(TaskDB)).all()
     return tasks
 
 @app.post("/tasks", status_code=status.HTTP_201_CREATED)
-async def create_task(payload: TaskCreate, db: Session=Depends(get_db)) -> Task:
+def create_task(payload: TaskCreate, db: Session=Depends(get_db)) -> Task:
     task = TaskDB(
         id=str(uuid4()),
         title=payload.title,
@@ -67,51 +67,65 @@ async def create_task(payload: TaskCreate, db: Session=Depends(get_db)) -> Task:
     return task
 
 @app.patch("/tasks/{task_id}", status_code=status.HTTP_200_OK)
-async def update_task(task_id: str, payload: TaskUpdate) -> Task:
-    for task in tasks:
-        if task.id == task_id:
-            if payload.title is not None: 
-                task.title = payload.title
-            if payload.completed is not None: 
-                task.completed = payload.completed
-            return task
-    raise HTTPException(status_code=404, detail="Task not found")
+def update_task(task_id: str, payload: TaskUpdate, db: Session=Depends(get_db)) -> Task:
+    task = db.get(TaskDB, task_id)
+    if task is None: 
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    task.title = payload.title if payload.title is not None else task.title
+    task.completed = payload.completed if payload.completed is not None else task.completed
+
+    db.commit()
+    return task
+    
 
 @app.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_task(task_id: str) -> None:
-    for task in tasks:
-        if task.id == task_id:
-            tasks.remove(task)
-            return
-    raise HTTPException(status_code=404, detail="Task not found")
+def delete_task(task_id: str, db: Session=Depends(get_db)) -> None:
+    task = db.get(TaskDB, task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
+
+    db.delete(task)
+    db.commit()
 
 
 @app.get("/categories", status_code=status.HTTP_200_OK)
-async def get_categories() -> list[Category]:
+def get_categories(db: Session=Depends(get_db)) -> list[Category]:
+    categories = db.scalars(select(CategoryDB)).all()
     return categories
 
 @app.post("/categories", status_code=status.HTTP_201_CREATED)
-async def create_category(payload: CategoryCreate) -> Category:
-    category = Category(id=str(uuid4()), name=payload.name)
-    categories.append(category)
+def create_category(payload: CategoryCreate, db: Session=Depends(get_db)) -> Category:
+    category = CategoryDB(id=str(uuid4()), name=payload.name)
+    
+    db.add(category)
+    db.commit()
+
     return category
 
 @app.patch("/categories/{category_id}", status_code=status.HTTP_200_OK)
-async def update_category(category_id: str, payload: CategoryUpdate) -> Category:
-    for category in categories:
-        if category.id == category_id:
-            if payload.name is not None: 
-                category.name = payload.name
-            return category
-    raise HTTPException(status_code=404, detail="Category not found")
+def update_category(category_id: str, payload: CategoryUpdate, db: Session=Depends(get_db)) -> Category:
+    category = db.get(CategoryDB, category_id)
+    if category is None: 
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    category.name = payload.name if payload.name is not None else category.name
+
+    db.commit()
+
+    return category
+    
 
 @app.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_category(category_id: str) -> None:
-    for category in categories:
-        if category.id == category_id:
-            categories.remove(category)
-            return
-    raise HTTPException(status_code=404, detail="Category not found")          
+def delete_category(category_id: str, db: Session=Depends(get_db)) -> None:
+    category = db.get(CategoryDB, category_id)
+
+    if category is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+
+    db.delete(category)
+    db.commit()
+
 
 
 if __name__ == "__main__":
